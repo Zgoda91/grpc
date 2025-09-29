@@ -153,12 +153,14 @@
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "src/core/channelz/channelz.h"
 #include "src/core/telemetry/histogram.h"
 #include "src/core/util/avl.h"
 #include "src/core/util/dual_ref_counted.h"
 #include "src/core/util/match.h"
 #include "src/core/util/per_cpu.h"
 #include "src/core/util/ref_counted_ptr.h"
+#include "src/core/util/single_set_ptr.h"
 #include "src/core/util/sync.h"
 
 namespace grpc_core {
@@ -180,8 +182,8 @@ class InstrumentMetadata {
   struct UintGaugeShape {};
   using HistogramShape = HistogramBuckets;
 
-  using Shape = std::variant<CounterShape, HistogramShape, DoubleGaugeShape,
-                             IntGaugeShape, UintGaugeShape>;
+  using Shape =
+      std::variant<CounterShape, HistogramShape, DoubleGaugeShape, IntGaugeShape, UintGaugeShape>;
 
   // A description of a metric.
   struct Description {
@@ -213,9 +215,9 @@ class MetricsSink;
 // to be called when histogram data is collected.
 // This comes with a relatively sever performance penalty. We'd like to be able
 // to remove this in the future.
-using HistogramCollectionHook = absl::AnyInvocable<void(
-    const InstrumentMetadata::Description* instrument,
-    absl::Span<const std::string> labels, int64_t value)>;
+using HistogramCollectionHook =
+    absl::AnyInvocable<void(const InstrumentMetadata::Description* instrument,
+                            absl::Span<const std::string> labels, int64_t value)>;
 void RegisterHistogramCollectionHook(HistogramCollectionHook hook);
 
 // A CollectionScope ensures that all metric updates in its lifetime are visible
@@ -236,9 +238,8 @@ class CollectionScope {
 
 namespace instrument_detail {
 
-void CallHistogramCollectionHooks(
-    const InstrumentMetadata::Description* instrument,
-    absl::Span<const std::string> labels, int64_t value);
+void CallHistogramCollectionHooks(const InstrumentMetadata::Description* instrument,
+                                  absl::Span<const std::string> labels, int64_t value);
 
 class GaugeStorage {
  public:
@@ -276,7 +277,7 @@ class GaugeStorage {
   std::vector<std::optional<uint64_t>> uint_gauges_;
 };
 
-class DomainStorage : public DualRefCounted<DomainStorage> {
+class DomainStorage : public DualRefCounted<DomainStorage>, public channelz::DataSource {
  public:
   DomainStorage(QueryableDomain* domain, std::vector<std::string> label);
 
@@ -288,6 +289,8 @@ class DomainStorage : public DualRefCounted<DomainStorage> {
   QueryableDomain* domain() const { return domain_; }
 
   virtual void FillGaugeStorage(GaugeStorage& gauge_storage) = 0;
+
+  void AddData(channelz::DataSink sink) override;
 
  private:
   QueryableDomain* domain_;
@@ -303,9 +306,8 @@ class StorageSet {
  public:
   StorageSet(QueryableDomain* domain, size_t map_shards_size);
   virtual ~StorageSet();
-  void ExportMetrics(
-      MetricsSink& sink,
-      absl::Span<const InstrumentMetadata::Description* const> metrics);
+  void ExportMetrics(MetricsSink& sink,
+                     absl::Span<const InstrumentMetadata::Description* const> metrics);
   size_t TestOnlyCountStorageHeld() const;
   QueryableDomain* domain() const { return domain_; }
 
@@ -314,8 +316,8 @@ class StorageSet {
  private:
   struct MapShard {
     mutable Mutex mu;
-    AVL<absl::Span<const std::string>, WeakRefCountedPtr<DomainStorage>>
-        storage_map ABSL_GUARDED_BY(mu);
+    AVL<absl::Span<const std::string>, WeakRefCountedPtr<DomainStorage>> storage_map
+        ABSL_GUARDED_BY(mu);
   };
 
   QueryableDomain* domain_;
@@ -336,10 +338,11 @@ class InstrumentIndex {
   // Registers a metric with the given name, description, unit, and shape.
   // Returns a pointer to the Description struct, which contains metadata about
   // the metric.
-  const InstrumentMetadata::Description* Register(
-      QueryableDomain* domain, uint64_t offset, absl::string_view name,
-      absl::string_view description, absl::string_view unit,
-      InstrumentMetadata::Shape shape);
+  const InstrumentMetadata::Description* Register(QueryableDomain* domain, uint64_t offset,
+                                                  absl::string_view name,
+                                                  absl::string_view description,
+                                                  absl::string_view unit,
+                                                  InstrumentMetadata::Shape shape);
 
   // Finds a metric with the given name, or nullptr if not found.
   const InstrumentMetadata::Description* Find(absl::string_view name) const;
@@ -349,8 +352,7 @@ class InstrumentIndex {
 
   // A map of metric name to Description. We use node_hash_map because we need
   // pointer stability for the values.
-  absl::node_hash_map<absl::string_view, InstrumentMetadata::Description>
-      metrics_;
+  absl::node_hash_map<absl::string_view, InstrumentMetadata::Description> metrics_;
 };
 
 // A QueryableDomain is a collection of metrics with a common set of labels.
@@ -361,8 +363,7 @@ class InstrumentIndex {
 class QueryableDomain {
  public:
   // Iterate all metric descriptions in all domains.
-  static void ForEachInstrument(
-      absl::FunctionRef<void(const InstrumentMetadata::Description*)> fn);
+  static void ForEachInstrument(absl::FunctionRef<void(const InstrumentMetadata::Description*)> fn);
 
   // Returns the names of the labels in the domain.
   absl::Span<const std::string> label_names() const { return label_names_; }
@@ -375,11 +376,21 @@ class QueryableDomain {
   static std::unique_ptr<CollectionScope> CreateCollectionScope();
   size_t TestOnlyCountStorageHeld() const;
 
+  absl::string_view name() const { return name_; }
+
+  RefCountedPtr<channelz::BaseNode> channelz_node() {
+    if (!channelz_.is_set()) {
+      return channelz_.Set(new ChannelzState(this))->channelz_node();
+    }
+    return channelz_->channelz_node();
+  }
+
  protected:
-  QueryableDomain(std::vector<std::string> label_names, size_t map_shards_size)
+  QueryableDomain(std::string name, std::vector<std::string> label_names, size_t map_shards_size)
       : label_names_(std::move(label_names)),
         map_shards_size_(label_names_.empty() ? 1 : map_shards_size),
-        map_shards_(std::make_unique<MapShard[]>(map_shards_size_)) {}
+        map_shards_(std::make_unique<MapShard[]>(map_shards_size_)),
+        name_(std::move(name)) {}
 
   // QueryableDomain should never be destroyed.
   ~QueryableDomain() { LOG(FATAL) << "QueryableDomain destroyed."; }
@@ -390,33 +401,28 @@ class QueryableDomain {
   void Constructed();
 
   // Allocates a counter with the given name, description, and unit.
-  const InstrumentMetadata::Description* AllocateCounter(
-      absl::string_view name, absl::string_view description,
-      absl::string_view unit);
-  const InstrumentMetadata::Description* AllocateHistogram(
-      absl::string_view name, absl::string_view description,
-      absl::string_view unit, HistogramBuckets bounds);
-  const InstrumentMetadata::Description* AllocateDoubleGauge(
-      absl::string_view name, absl::string_view description,
-      absl::string_view unit);
-  const InstrumentMetadata::Description* AllocateIntGauge(
-      absl::string_view name, absl::string_view description,
-      absl::string_view unit);
-  const InstrumentMetadata::Description* AllocateUintGauge(
-      absl::string_view name, absl::string_view description,
-      absl::string_view unit);
+  const InstrumentMetadata::Description* AllocateCounter(absl::string_view name,
+                                                         absl::string_view description,
+                                                         absl::string_view unit);
+  const InstrumentMetadata::Description* AllocateHistogram(absl::string_view name,
+                                                           absl::string_view description,
+                                                           absl::string_view unit,
+                                                           HistogramBuckets bounds);
+  const InstrumentMetadata::Description* AllocateDoubleGauge(absl::string_view name,
+                                                             absl::string_view description,
+                                                             absl::string_view unit);
+  const InstrumentMetadata::Description* AllocateIntGauge(absl::string_view name,
+                                                          absl::string_view description,
+                                                          absl::string_view unit);
+  const InstrumentMetadata::Description* AllocateUintGauge(absl::string_view name,
+                                                           absl::string_view description,
+                                                           absl::string_view unit);
 
   // Returns the number of slots allocated for each metric type.
   uint64_t allocated_counter_slots() const { return allocated_counter_slots_; }
-  uint64_t allocated_double_gauge_slots() const {
-    return allocated_double_gauge_slots_;
-  }
-  uint64_t allocated_int_gauge_slots() const {
-    return allocated_int_gauge_slots_;
-  }
-  uint64_t allocated_uint_gauge_slots() const {
-    return allocated_uint_gauge_slots_;
-  }
+  uint64_t allocated_double_gauge_slots() const { return allocated_double_gauge_slots_; }
+  uint64_t allocated_int_gauge_slots() const { return allocated_int_gauge_slots_; }
+  uint64_t allocated_uint_gauge_slots() const { return allocated_uint_gauge_slots_; }
 
  private:
   friend class StorageSet;
@@ -425,18 +431,31 @@ class QueryableDomain {
 
   struct MapShard {
     mutable Mutex mu;
-    AVL<absl::Span<const std::string>, WeakRefCountedPtr<DomainStorage>>
-        storage_map ABSL_GUARDED_BY(mu);
+    AVL<absl::Span<const std::string>, WeakRefCountedPtr<DomainStorage>> storage_map
+        ABSL_GUARDED_BY(mu);
+  };
+
+  struct ChannelzState final : public channelz::DataSource {
+    explicit ChannelzState(QueryableDomain* domain)
+        : DataSource(MakeRefCounted<channelz::MetricsDomainNode>(std::string(domain->name()))),
+          domain(domain) {
+      SourceConstructed();
+    }
+    ~ChannelzState() { SourceDestructing(); }
+    QueryableDomain* const domain;
+    void AddData(channelz::DataSink sink) override { domain->AddData(sink); }
+    RefCountedPtr<channelz::BaseNode> channelz_node() { return DataSource::channelz_node(); }
   };
 
   void RegisterStorageSet(StorageSet* storage_set);
   void UnregisterStorageSet(StorageSet* storage_set);
 
   std::unique_ptr<StorageSet> CreateStorageSet();
-  virtual RefCountedPtr<DomainStorage> CreateDomainStorage(
-      std::vector<std::string> label) = 0;
+  virtual RefCountedPtr<DomainStorage> CreateDomainStorage(std::vector<std::string> label) = 0;
   void DomainStorageOrphaned(DomainStorage* storage);
   MapShard& GetMapShard(absl::Span<const std::string> label);
+
+  void AddData(channelz::DataSink sink);
 
   // Allocate `size` elements in the domain.
   // Counters will allocate one element. Histograms will allocate one per
@@ -459,15 +478,14 @@ class QueryableDomain {
   uint64_t allocated_int_gauge_slots_ = 0;
   uint64_t allocated_uint_gauge_slots_ = 0;
 
-  Mutex storage_sets_mu_;
-  std::vector<StorageSet*> storage_sets_ ABSL_GUARDED_BY(storage_sets_mu_);
-
   const size_t map_shards_size_;
   std::unique_ptr<MapShard[]> map_shards_;
 
   mutable Mutex active_storage_sets_mu_;
-  std::vector<StorageSet*> active_storage_sets_
-      ABSL_GUARDED_BY(active_storage_sets_mu_);
+  std::vector<StorageSet*> active_storage_sets_ ABSL_GUARDED_BY(active_storage_sets_mu_);
+
+  std::string name_;
+  SingleSetPtr<ChannelzState> channelz_;
 };
 
 // An InstrumentDomain is a collection of metrics with a common set of labels.
@@ -494,8 +512,7 @@ class InstrumentHandle {
  private:
   friend Domain;
 
-  InstrumentHandle(Domain* instrument_domain,
-                   const InstrumentMetadata::Description* description,
+  InstrumentHandle(Domain* instrument_domain, const InstrumentMetadata::Description* description,
                    Shape shape)
       : instrument_domain_(instrument_domain),
         offset_(description->offset),
@@ -523,9 +540,7 @@ class LowContentionBackend final {
  public:
   explicit LowContentionBackend(size_t size);
 
-  void Increment(size_t index) {
-    counters_[index].fetch_add(1, std::memory_order_relaxed);
-  }
+  void Increment(size_t index) { counters_[index].fetch_add(1, std::memory_order_relaxed); }
 
   uint64_t Sum(size_t index);
 
@@ -548,8 +563,7 @@ class HighContentionBackend final {
   uint64_t Sum(size_t index);
 
  private:
-  PerCpu<std::unique_ptr<std::atomic<uint64_t>[]>> counters_{
-      PerCpuOptions().SetMaxShards(16)};
+  PerCpu<std::unique_ptr<std::atomic<uint64_t>[]>> counters_{PerCpuOptions().SetMaxShards(16)};
 };
 
 // MetricsSink is an interface for accumulating metrics.
@@ -558,17 +572,16 @@ class MetricsSink {
  public:
   // Called once per label per metric, with the value of that metric for that
   // label.
-  virtual void Counter(absl::Span<const std::string> label,
-                       absl::string_view name, uint64_t value) = 0;
-  virtual void Histogram(absl::Span<const std::string> label,
-                         absl::string_view name, HistogramBuckets bounds,
-                         absl::Span<const uint64_t> counts) = 0;
-  virtual void DoubleGauge(absl::Span<const std::string> labels,
-                           absl::string_view name, double value) = 0;
-  virtual void IntGauge(absl::Span<const std::string> labels,
-                        absl::string_view name, int64_t value) = 0;
-  virtual void UintGauge(absl::Span<const std::string> labels,
-                         absl::string_view name, uint64_t value) = 0;
+  virtual void Counter(absl::Span<const std::string> label, absl::string_view name,
+                       uint64_t value) = 0;
+  virtual void Histogram(absl::Span<const std::string> label, absl::string_view name,
+                         HistogramBuckets bounds, absl::Span<const uint64_t> counts) = 0;
+  virtual void DoubleGauge(absl::Span<const std::string> labels, absl::string_view name,
+                           double value) = 0;
+  virtual void IntGauge(absl::Span<const std::string> labels, absl::string_view name,
+                        int64_t value) = 0;
+  virtual void UintGauge(absl::Span<const std::string> labels, absl::string_view name,
+                         uint64_t value) = 0;
 
  protected:
   ~MetricsSink() = default;
@@ -592,22 +605,19 @@ class MetricsQuery {
   MetricsQuery& OnlyMetrics(absl::Span<const std::string> metrics);
 
   // Returns the metrics that are selected by this query.
-  std::optional<absl::Span<const std::string>> selected_metrics() const {
-    return only_metrics_;
-  }
+  std::optional<absl::Span<const std::string>> selected_metrics() const { return only_metrics_; }
 
   // Adapts `sink` by including the filtering requested, and then calls `fn`
   // with the filtering sink. This is mainly an implementation detail.
-  void Apply(absl::Span<const std::string> label_names,
-             absl::FunctionRef<void(MetricsSink&)> fn, MetricsSink& sink) const;
+  void Apply(absl::Span<const std::string> label_names, absl::FunctionRef<void(MetricsSink&)> fn,
+             MetricsSink& sink) const;
 
   // Runs the query, outputting the results to `sink`.
   void Run(std::unique_ptr<CollectionScope> scope, MetricsSink& sink) const;
 
  private:
   void ApplyLabelChecks(absl::Span<const std::string> label_names,
-                        absl::FunctionRef<void(MetricsSink&)> fn,
-                        MetricsSink& sink) const;
+                        absl::FunctionRef<void(MetricsSink&)> fn, MetricsSink& sink) const;
 
   absl::flat_hash_map<absl::string_view, std::string> label_eqs_;
   std::optional<std::vector<std::string>> only_metrics_;
@@ -622,15 +632,13 @@ Shape* GetMemoizedShape(Args&&... args) {
   // them.
   using ShapeCache = absl::node_hash_map<std::tuple<Args...>, Shape*>;
   static ShapeCache* shape_cache = new ShapeCache();
-  auto it =
-      shape_cache->find(std::forward_as_tuple(std::forward<Args>(args)...));
+  auto it = shape_cache->find(std::forward_as_tuple(std::forward<Args>(args)...));
   Shape* shape;
   if (it != shape_cache->end()) {
     shape = it->second;
   } else {
     shape = new Shape(std::forward<Args>(args)...);
-    shape_cache->emplace(std::forward_as_tuple(std::forward<Args>(args)...),
-                         shape);
+    shape_cache->emplace(std::forward_as_tuple(std::forward<Args>(args)...), shape);
   }
   return shape;
 }
@@ -642,12 +650,9 @@ class InstrumentDomainImpl final : public QueryableDomain {
  public:
   using Self = InstrumentDomainImpl<Backend, N, Tag>;
   using CounterHandle = InstrumentHandle<Counter, Self>;
-  using DoubleGaugeHandle =
-      InstrumentHandle<InstrumentMetadata::DoubleGaugeShape, Self>;
-  using IntGaugeHandle =
-      InstrumentHandle<InstrumentMetadata::IntGaugeShape, Self>;
-  using UintGaugeHandle =
-      InstrumentHandle<InstrumentMetadata::UintGaugeShape, Self>;
+  using DoubleGaugeHandle = InstrumentHandle<InstrumentMetadata::DoubleGaugeShape, Self>;
+  using IntGaugeHandle = InstrumentHandle<InstrumentMetadata::IntGaugeShape, Self>;
+  using UintGaugeHandle = InstrumentHandle<InstrumentMetadata::UintGaugeShape, Self>;
   template <typename Shape>
   using HistogramHandle = InstrumentHandle<const Shape*, Self>;
 
@@ -655,16 +660,13 @@ class InstrumentDomainImpl final : public QueryableDomain {
    public:
     explicit GaugeSink(GaugeStorage& storage) : storage_(storage) {}
 
-    void Set(InstrumentHandle<InstrumentMetadata::DoubleGaugeShape, Self> g,
-             double x) {
+    void Set(InstrumentHandle<InstrumentMetadata::DoubleGaugeShape, Self> g, double x) {
       storage_.SetDouble(g.offset_, x);
     }
-    void Set(InstrumentHandle<InstrumentMetadata::IntGaugeShape, Self> g,
-             int64_t x) {
+    void Set(InstrumentHandle<InstrumentMetadata::IntGaugeShape, Self> g, int64_t x) {
       storage_.SetInt(g.offset_, x);
     }
-    void Set(InstrumentHandle<InstrumentMetadata::UintGaugeShape, Self> g,
-             uint64_t x) {
+    void Set(InstrumentHandle<InstrumentMetadata::UintGaugeShape, Self> g, uint64_t x) {
       storage_.SetUint(g.offset_, x);
     }
 
@@ -680,8 +682,7 @@ class InstrumentDomainImpl final : public QueryableDomain {
     virtual void PopulateGaugeData(GaugeSink& sink) = 0;
 
    protected:
-    explicit GaugeProvider(RefCountedPtr<Storage> storage)
-        : storage_(std::move(storage)) {
+    explicit GaugeProvider(RefCountedPtr<Storage> storage) : storage_(std::move(storage)) {
       DCHECK(storage_ != nullptr);
     }
     ~GaugeProvider() { DCHECK(storage_ == nullptr); }
@@ -724,8 +725,7 @@ class InstrumentDomainImpl final : public QueryableDomain {
     friend class InstrumentDomainImpl<Backend, N, Tag>;
     friend class GaugeProvider;
 
-    explicit Storage(InstrumentDomainImpl* instrument_domain,
-                     std::vector<std::string> labels)
+    explicit Storage(InstrumentDomainImpl* instrument_domain, std::vector<std::string> labels)
         : DomainStorage(instrument_domain, std::move(labels)),
           backend_(instrument_domain->allocated_counter_slots()) {}
 
@@ -738,9 +738,9 @@ class InstrumentDomainImpl final : public QueryableDomain {
 
     void UnregisterGaugeProvider(GaugeProvider* provider) {
       MutexLock lock(&gauge_providers_mu_);
-      gauge_providers_.erase(std::remove(gauge_providers_.begin(),
-                                         gauge_providers_.end(), provider),
-                             gauge_providers_.end());
+      gauge_providers_.erase(
+          std::remove(gauge_providers_.begin(), gauge_providers_.end(), provider),
+          gauge_providers_.end());
     }
 
     void FillGaugeStorage(GaugeStorage& storage) override {
@@ -753,14 +753,13 @@ class InstrumentDomainImpl final : public QueryableDomain {
 
     Backend backend_;
     Mutex gauge_providers_mu_;
-    std::vector<GaugeProvider*> gauge_providers_
-        ABSL_GUARDED_BY(gauge_providers_mu_);
+    std::vector<GaugeProvider*> gauge_providers_ ABSL_GUARDED_BY(gauge_providers_mu_);
   };
 
   GPR_ATTRIBUTE_NOINLINE explicit InstrumentDomainImpl(
-      std::vector<std::string> label_names,
+      std::string name, std::vector<std::string> label_names,
       size_t map_shards = std::min(16u, gpr_cpu_num_cores()))
-      : QueryableDomain(std::move(label_names), map_shards) {
+      : QueryableDomain(std::move(name), std::move(label_names), map_shards) {
     CHECK_EQ(this->label_names().size(), N);
     Constructed();
   }
@@ -770,40 +769,32 @@ class InstrumentDomainImpl final : public QueryableDomain {
   // synchronization.
   // Effectively: Do this at static initialization time.
 
-  CounterHandle RegisterCounter(absl::string_view name,
-                                absl::string_view description,
+  CounterHandle RegisterCounter(absl::string_view name, absl::string_view description,
                                 absl::string_view unit) {
-    return CounterHandle{this, AllocateCounter(name, description, unit),
-                         Counter{}};
+    return CounterHandle{this, AllocateCounter(name, description, unit), Counter{}};
   }
 
   template <typename Shape, typename... Args>
-  HistogramHandle<Shape> RegisterHistogram(absl::string_view name,
-                                           absl::string_view description,
-                                           absl::string_view unit,
-                                           Args&&... args) {
+  HistogramHandle<Shape> RegisterHistogram(absl::string_view name, absl::string_view description,
+                                           absl::string_view unit, Args&&... args) {
     auto* shape = GetMemoizedShape<Shape>(std::forward<Args>(args)...);
-    const auto* desc =
-        AllocateHistogram(name, description, unit, shape->bounds());
+    const auto* desc = AllocateHistogram(name, description, unit, shape->bounds());
     return HistogramHandle<Shape>{this, desc, shape};
   }
 
-  DoubleGaugeHandle RegisterDoubleGauge(absl::string_view name,
-                                        absl::string_view description,
+  DoubleGaugeHandle RegisterDoubleGauge(absl::string_view name, absl::string_view description,
                                         absl::string_view unit) {
     return DoubleGaugeHandle{this, AllocateDoubleGauge(name, description, unit),
                              InstrumentMetadata::DoubleGaugeShape{}};
   }
 
-  IntGaugeHandle RegisterIntGauge(absl::string_view name,
-                                  absl::string_view description,
+  IntGaugeHandle RegisterIntGauge(absl::string_view name, absl::string_view description,
                                   absl::string_view unit) {
     return IntGaugeHandle{this, AllocateIntGauge(name, description, unit),
                           InstrumentMetadata::IntGaugeShape{}};
   }
 
-  UintGaugeHandle RegisterUintGauge(absl::string_view name,
-                                    absl::string_view description,
+  UintGaugeHandle RegisterUintGauge(absl::string_view name, absl::string_view description,
                                     absl::string_view unit) {
     return UintGaugeHandle{this, AllocateUintGauge(name, description, unit),
                            InstrumentMetadata::UintGaugeShape{}};
@@ -817,12 +808,10 @@ class InstrumentDomainImpl final : public QueryableDomain {
     std::vector<std::string> label_names;
     label_names.reserve(N);
     (label_names.emplace_back(absl::StrCat(labels)), ...);
-    return DownCastRefCountedPtr<Storage>(
-        GetDomainStorage(std::move(label_names)));
+    return DownCastRefCountedPtr<Storage>(GetDomainStorage(std::move(label_names)));
   }
 
-  RefCountedPtr<DomainStorage> CreateDomainStorage(
-      std::vector<std::string> labels) override {
+  RefCountedPtr<DomainStorage> CreateDomainStorage(std::vector<std::string> labels) override {
     return RefCountedPtr<Storage>(new Storage(this, std::move(labels)));
   }
 
@@ -839,8 +828,7 @@ class MakeLabel {
 };
 
 template <typename... LabelNames>
-GPR_ATTRIBUTE_NOINLINE auto MakeLabelFromTuple(
-    std::tuple<LabelNames...> t) noexcept {
+GPR_ATTRIBUTE_NOINLINE auto MakeLabelFromTuple(std::tuple<LabelNames...> t) noexcept {
   return std::apply(MakeLabel(), t);
 }
 }  // namespace instrument_detail
@@ -850,9 +838,8 @@ class InstrumentDomain {
  public:
   static auto* Domain() {
     static auto* domain = new instrument_detail::InstrumentDomainImpl<
-        typename Derived::Backend,
-        std::tuple_size_v<decltype(Derived::kLabels)>, Derived>(
-        instrument_detail::MakeLabelFromTuple(Derived::kLabels));
+        typename Derived::Backend, std::tuple_size_v<decltype(Derived::kLabels)>, Derived>(
+        absl::StrCat(Derived::kName), instrument_detail::MakeLabelFromTuple(Derived::kLabels));
     return domain;
   }
 
@@ -868,34 +855,29 @@ class InstrumentDomain {
     return std::tuple<instrument_detail::ConstCharPtr<Label>...>{labels...};
   }
 
-  static auto RegisterCounter(absl::string_view name,
-                              absl::string_view description,
+  static auto RegisterCounter(absl::string_view name, absl::string_view description,
                               absl::string_view unit) {
     return Domain()->RegisterCounter(name, description, unit);
   }
 
   template <typename Shape, typename... Args>
-  static auto RegisterHistogram(absl::string_view name,
-                                absl::string_view description,
+  static auto RegisterHistogram(absl::string_view name, absl::string_view description,
                                 absl::string_view unit, Args&&... args) {
-    return Domain()->template RegisterHistogram<Shape>(
-        name, description, unit, std::forward<Args>(args)...);
+    return Domain()->template RegisterHistogram<Shape>(name, description, unit,
+                                                       std::forward<Args>(args)...);
   }
 
-  static auto RegisterDoubleGauge(absl::string_view name,
-                                  absl::string_view description,
+  static auto RegisterDoubleGauge(absl::string_view name, absl::string_view description,
                                   absl::string_view unit) {
     return Domain()->RegisterDoubleGauge(name, description, unit);
   }
 
-  static auto RegisterIntGauge(absl::string_view name,
-                               absl::string_view description,
+  static auto RegisterIntGauge(absl::string_view name, absl::string_view description,
                                absl::string_view unit) {
     return Domain()->RegisterIntGauge(name, description, unit);
   }
 
-  static auto RegisterUintGauge(absl::string_view name,
-                                absl::string_view description,
+  static auto RegisterUintGauge(absl::string_view name, absl::string_view description,
                                 absl::string_view unit) {
     return Domain()->RegisterUintGauge(name, description, unit);
   }
@@ -905,8 +887,7 @@ class InstrumentDomain {
 };
 
 template <typename DomainType>
-using InstrumentDomainImpl =
-    std::remove_pointer_t<decltype(DomainType::Domain())>;
+using InstrumentDomainImpl = std::remove_pointer_t<decltype(DomainType::Domain())>;
 
 template <typename DomainType>
 using InstrumentStorage = typename InstrumentDomainImpl<DomainType>::Storage;

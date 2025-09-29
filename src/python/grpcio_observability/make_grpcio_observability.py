@@ -49,10 +49,7 @@ CC_INCLUDES={cc_includes}
 BAZEL_REFERENCE_LINK = [
     ("@com_google_absl//", "third_party/abseil-cpp/"),
     ("@com_google_protobuf//upb/", "third_party/protobuf/upb/"),
-    (
-        "@com_google_protobuf//third_party/",
-        "third_party/protobuf/third_party/"
-    ),
+    ("@com_google_protobuf//third_party/", "third_party/protobuf/third_party/"),
     ("//src", "grpc_root/src"),
 ]
 
@@ -97,7 +94,7 @@ COPY_FILES_SOURCE_TARGET_PAIRS = [
     ("third_party/protobuf/upb", "third_party/protobuf/upb"),
     (
         "third_party/protobuf/third_party/utf8_range",
-        "third_party/protobuf/third_party/utf8_range"
+        "third_party/protobuf/third_party/utf8_range",
     ),
     ("src/core", "grpc_root/src/core"),
 ]
@@ -187,7 +184,9 @@ def _generate_deps_file_content():
             filepath = _bazel_name_to_file_path(name)
             if filepath:
                 cc_files.add(filepath)
-        if (name.endswith(".c") and not name.endswith((".upb.c", ".upb_minitable.c"))):
+        if name.endswith(".c") and not name.endswith(
+            (".upb.c", ".upb_minitable.c")
+        ):
             filepath = _bazel_name_to_file_path(name)
             if filepath:
                 cc_files.add(filepath)

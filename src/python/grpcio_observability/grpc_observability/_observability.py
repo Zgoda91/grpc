@@ -112,7 +112,9 @@ class TracingData:
     should_sample: bool
     child_span_count: int
     span_labels: Mapping[str, Union[str, bytes]] = field(default_factory=dict)
-    span_events: List[Dict[str, Union[str, Dict[str, str]]]] = field(default_factory=list)
+    span_events: List[Dict[str, Union[str, Dict[str, str]]]] = field(
+        default_factory=list
+    )
 
 
 @enum.unique

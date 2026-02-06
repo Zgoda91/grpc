@@ -28,9 +28,9 @@ from ._typing import ChannelArgumentType
 
 
 def _augment_channel_arguments(
-    base_options: ChannelArgumentType, 
+    base_options: ChannelArgumentType,
     compression: Optional[grpc.Compression],
-    xds: bool
+    xds: bool,
 ):
     compression_option = _compression.create_channel_option(compression)
     maybe_server_call_tracer_factory_option = (

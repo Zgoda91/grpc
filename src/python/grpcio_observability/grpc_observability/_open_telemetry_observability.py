@@ -37,12 +37,12 @@ from grpc_observability._observability import OptionalLabelType
 from grpc_observability._observability import StatsData
 from grpc_observability._observability import TracingData
 from opentelemetry import trace
-from opentelemetry.trace import status as otel_status
 from opentelemetry.context.context import Context
 from opentelemetry.metrics import Counter
 from opentelemetry.metrics import Histogram
 from opentelemetry.metrics import Meter
 from opentelemetry.sdk import trace as sdk_trace
+from opentelemetry.trace import status as otel_status
 from opentelemetry.trace.propagation.tracecontext import (
     TraceContextTextMapPropagator,
 )

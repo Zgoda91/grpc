@@ -22,6 +22,10 @@ import unittest
 
 import grpc_observability
 from grpc_observability import _open_telemetry_measures
+from grpc_observability._open_telemetry_observability import (
+    GRPC_METHOD_LABEL,
+    GRPC_OTHER_LABEL_VALUE
+)
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics import view
 from opentelemetry.sdk.metrics.export import AggregationTemporality
@@ -88,11 +92,7 @@ class OTelMetricExporter(MetricExporter):
                         )
 
 
-@unittest.skipIf(
-    os.name == "nt" or "darwin" in sys.platform,
-    "Observability is not supported in Windows and MacOS",
-)
-class OpenTelemetryObservabilityTest(AioTestBase):
+class OpenTelemetryObservabilityBase(AioTestBase):
     async def setUp(self):
         self.all_metrics = defaultdict(list)
         otel_exporter = OTelMetricExporter(self.all_metrics)
@@ -105,36 +105,14 @@ class OpenTelemetryObservabilityTest(AioTestBase):
             meter_provider=self._provider
         )
         self._otel_plugin.register_global()
-        self._server, self._port = await _test_server.start_server()
+        self._server = None
+        self._port = None
 
     async def tearDown(self):
-        await self._server.stop(0)
+        if (self._server):
+            await self._server.stop(0)
         self._otel_plugin.deregister_global()
         self._provider.shutdown()
-
-    async def test_record_unary_unary(self):
-        await _test_server.unary_unary_call(port=self._port)
-
-        await self._validate_metrics_exist(self.all_metrics)
-        self._validate_all_metrics_names(self.all_metrics.keys())
-
-    async def test_record_unary_stream(self):
-        await _test_server.unary_stream_call(port=self._port)
-
-        await self._validate_metrics_exist(self.all_metrics)
-        self._validate_all_metrics_names(self.all_metrics.keys())
-
-    async def test_record_stream_unary(self):
-        await _test_server.stream_unary_call(port=self._port)
-
-        await self._validate_metrics_exist(self.all_metrics)
-        self._validate_all_metrics_names(self.all_metrics.keys())
-
-    async def test_record_stream_stream(self):
-        await _test_server.stream_stream_call(port=self._port)
-
-        await self._validate_metrics_exist(self.all_metrics)
-        self._validate_all_metrics_names(self.all_metrics.keys())
 
     async def _validate_metrics_exist(
         self, all_metrics: Dict[str, Any]
@@ -165,6 +143,109 @@ class OpenTelemetryObservabilityTest(AioTestBase):
                     base_metric.name in metric_names,
                     msg=f"metric {base_metric.name} not found in exported metrics: {metric_names}!",
                 )
+
+    def _validate_all_method_labels(
+        self,
+        all_metrics: Dict[str, Any],
+        registered_method_name: str = None
+    ) -> None:
+        server_method_values = set()
+        client_method_values = set()
+        for metric_name, label_list in all_metrics:
+            for labels in label_list:
+                if GRPC_METHOD_LABEL in labels:
+                    if "grpc.server" in metric_name:
+                        server_method_values.add(labels[GRPC_METHOD_LABEL])
+                    elif "grpc.client" in metric_name:
+                        client_method_values.add(labels[GRPC_METHOD_LABEL])
+
+        self.assertEqual(len(server_method_values), 1)
+        self.assertEqual(len(client_method_values), 1)
+
+        if registered_method_name:
+            # print(f"ZGODA {server_method_values}")
+            # print(f"ZGODA {client_method_values}")
+            self.assertTrue(registered_method_name in server_method_values)
+            self.assertTrue(registered_method_name in client_method_values)
+        else:
+            self.assertTrue(GRPC_OTHER_LABEL_VALUE in server_method_values)
+            self.assertTrue(GRPC_OTHER_LABEL_VALUE in client_method_values)
+
+
+@unittest.skipIf(
+    os.name == "nt" or "darwin" in sys.platform,
+    "Observability is not supported in Windows and MacOS",
+)
+class OpenTelemetryObservabilityUnregisteredMethodsTest(OpenTelemetryObservabilityBase):
+    async def test_record_unary_unary(self):
+        self._server, self._port = await _test_server.start_server(register_method=False)
+        await _test_server.unary_unary_call(port=self._port)
+
+        await self._validate_metrics_exist(self.all_metrics)
+        self._validate_all_metrics_names(self.all_metrics.keys())
+        self._validate_all_method_labels(self.all_metrics.items())
+
+    async def test_record_unary_stream(self):
+        self._server, self._port = await _test_server.start_server(register_method=False)
+        await _test_server.unary_stream_call(port=self._port)
+
+        await self._validate_metrics_exist(self.all_metrics)
+        self._validate_all_metrics_names(self.all_metrics.keys())
+        self._validate_all_method_labels(self.all_metrics.items())
+
+    async def test_record_stream_unary(self):
+        self._server, self._port = await _test_server.start_server(register_method=False)
+        await _test_server.stream_unary_call(port=self._port)
+
+        await self._validate_metrics_exist(self.all_metrics)
+        self._validate_all_metrics_names(self.all_metrics.keys())
+        self._validate_all_method_labels(self.all_metrics.items())
+
+    async def test_record_stream_stream(self):
+        self._server, self._port = await _test_server.start_server(register_method=False)
+        await _test_server.stream_stream_call(port=self._port)
+
+        await self._validate_metrics_exist(self.all_metrics)
+        self._validate_all_metrics_names(self.all_metrics.keys())
+        self._validate_all_method_labels(self.all_metrics.items())
+
+
+@unittest.skipIf(
+    os.name == "nt" or "darwin" in sys.platform,
+    "Observability is not supported in Windows and MacOS",
+)
+class OpenTelemetryObservabilityRegisteredMethodsTest(OpenTelemetryObservabilityBase):
+    async def test_record_unary_unary(self):
+        self._server, self._port = await _test_server.start_server(register_method=True)
+        await _test_server.unary_unary_call(port=self._port, registered_method=True)
+
+        await self._validate_metrics_exist(self.all_metrics)
+        self._validate_all_metrics_names(self.all_metrics.keys())
+        self._validate_all_method_labels(self.all_metrics.items(), "test/UnaryUnary")
+
+    async def test_record_unary_stream(self):
+        self._server, self._port = await _test_server.start_server(register_method=True)
+        await _test_server.unary_stream_call(port=self._port, registered_method=True)
+
+        await self._validate_metrics_exist(self.all_metrics)
+        self._validate_all_metrics_names(self.all_metrics.keys())
+        self._validate_all_method_labels(self.all_metrics.items(), "test/UnaryStream")
+
+    async def test_record_stream_unary(self):
+        self._server, self._port = await _test_server.start_server(register_method=True)
+        await _test_server.stream_unary_call(port=self._port, registered_method=True)
+
+        await self._validate_metrics_exist(self.all_metrics)
+        self._validate_all_metrics_names(self.all_metrics.keys())
+        self._validate_all_method_labels(self.all_metrics.items(), "test/StreamUnary")
+
+    async def test_record_stream_stream(self):
+        self._server, self._port = await _test_server.start_server(register_method=True)
+        await _test_server.stream_stream_call(port=self._port, registered_method=True)
+
+        await self._validate_metrics_exist(self.all_metrics)
+        self._validate_all_metrics_names(self.all_metrics.keys())
+        self._validate_all_method_labels(self.all_metrics.items(), "test/StreamStream")
 
 
 if __name__ == "__main__":

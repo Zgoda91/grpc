@@ -47,6 +47,7 @@ async def stream_stream(request_iterator, servicer_context):
     async for _ in request_iterator:
         yield _RESPONSE
 
+
 class _MethodHandler(grpc.RpcMethodHandler):
     def __init__(self, request_streaming, response_streaming):
         self.request_streaming = request_streaming
@@ -102,7 +103,7 @@ async def unary_unary_call(port, registered_method=False):
     async with grpc.aio.insecure_channel(f"localhost:{port}") as channel:
         multi_callable = channel.unary_unary(
             grpc._common.fully_qualified_method(_SERVICE_NAME, _UNARY_UNARY),
-            _registered_method=registered_method
+            _registered_method=registered_method,
         )
         unused_response = await multi_callable(_REQUEST)
 
@@ -111,7 +112,7 @@ async def unary_stream_call(port, registered_method=False):
     async with grpc.aio.insecure_channel(f"localhost:{port}") as channel:
         multi_callable = channel.unary_stream(
             grpc._common.fully_qualified_method(_SERVICE_NAME, _UNARY_STREAM),
-            _registered_method=registered_method
+            _registered_method=registered_method,
         )
         call = multi_callable(_REQUEST)
         async for _ in call:
@@ -122,7 +123,7 @@ async def stream_unary_call(port, registered_method=False):
     async with grpc.aio.insecure_channel(f"localhost:{port}") as channel:
         multi_callable = channel.stream_unary(
             grpc._common.fully_qualified_method(_SERVICE_NAME, _STREAM_UNARY),
-            _registered_method=registered_method
+            _registered_method=registered_method,
         )
         call = multi_callable(iter([_REQUEST] * STREAM_LENGTH))
         unused_response = await call
@@ -132,7 +133,7 @@ async def stream_stream_call(port, registered_method=False):
     async with grpc.aio.insecure_channel(f"localhost:{port}") as channel:
         multi_callable = channel.stream_stream(
             grpc._common.fully_qualified_method(_SERVICE_NAME, _STREAM_STREAM),
-            _registered_method=registered_method
+            _registered_method=registered_method,
         )
         call = multi_callable(iter([_REQUEST] * STREAM_LENGTH))
         async for _ in call:

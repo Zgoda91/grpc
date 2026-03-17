@@ -783,11 +783,9 @@ async def _unary_unary_handler(unused_request_iter, unused_context):
 class TestInterceptedUnaryUnaryCallWithRegisteredMethods(AioTestBase):
     _SERVICE = "test"
     _METHOD_HANDLERS = {
-        "UnaryUnary": grpc.unary_unary_rpc_method_handler(
-            _unary_unary_handler
-        )
+        "UnaryUnary": grpc.unary_unary_rpc_method_handler(_unary_unary_handler)
     }
-    
+
     async def setUp(self):
         self._server = aio.server()
         self._port = self._server.add_insecure_port("[::]:0")

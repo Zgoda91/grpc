@@ -239,7 +239,7 @@ class TestInterceptedStreamStreamCallWithRegisteredMethods(AioTestBase):
             _stream_stream_handler
         )
     }
-    
+
     async def setUp(self):
         self._server = aio.server()
         self._port = self._server.add_insecure_port("[::]:0")
@@ -273,6 +273,7 @@ class TestInterceptedStreamStreamCallWithRegisteredMethods(AioTestBase):
             self.assertEqual(
                 record[0], ("stream-stream", fully_qualified_method)
             )
+
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)

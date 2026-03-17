@@ -480,7 +480,6 @@ class TestUnaryStreamClientInterceptor(AioTestBase):
         await channel.close()
 
 
-
 class _RecordingUnaryStreamInterceptor(aio.UnaryStreamClientInterceptor):
     def __init__(self, record):
         self.record = record

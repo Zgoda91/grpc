@@ -758,6 +758,65 @@ class TestInterceptedUnaryUnaryCall(AioTestBase):
                 self.fail("Callback was not called")
 
 
+class _RecordingUnaryUnaryInterceptor(aio.UnaryUnaryClientInterceptor):
+    def __init__(self, record):
+        self.record = record
+
+    async def intercept_unary_unary(
+        self, continuation, client_call_details, request
+    ):
+        method = client_call_details.method
+        if isinstance(method, bytes):
+            method = method.decode()
+        self.record.append(("unary-unary", method))
+        return await continuation(client_call_details, request)
+
+
+_REQUEST = b"\x00\x00\x00"
+_RESPONSE = b"\x00\x00\x00"
+
+
+async def _unary_unary_handler(unused_request_iter, unused_context):
+    return _RESPONSE
+
+
+class TestInterceptedUnaryUnaryCallWithRegisteredMethods(AioTestBase):
+    _SERVICE = "test"
+    _METHOD_HANDLERS = {
+        "UnaryUnary": grpc.unary_unary_rpc_method_handler(
+            _unary_unary_handler
+        )
+    }
+    
+    async def setUp(self):
+        self._server = aio.server()
+        self._port = self._server.add_insecure_port("[::]:0")
+        self._server.add_registered_method_handlers(
+            self._SERVICE, self._METHOD_HANDLERS
+        )
+        await self._server.start()
+
+    async def tearDown(self):
+        await self._server.stop(0)
+
+    async def test_unary_unary_interceptor(self):
+        record = []
+        fully_qualified_method = f"/{self._SERVICE}/UnaryUnary"
+
+        async with grpc.aio.insecure_channel(
+            f"localhost:{self._port}",
+            interceptors=[_RecordingUnaryUnaryInterceptor(record)],
+        ) as channel:
+            multi_callable = channel.unary_unary(
+                fully_qualified_method, _registered_method=True
+            )
+            response = await multi_callable(_REQUEST)
+
+            self.assertEqual(response, _RESPONSE)
+            self.assertEqual(len(record), 1)
+            self.assertEqual(record[0], ("unary-unary", fully_qualified_method))
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
     unittest.main(verbosity=2)

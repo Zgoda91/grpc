@@ -480,6 +480,72 @@ class TestUnaryStreamClientInterceptor(AioTestBase):
         await channel.close()
 
 
+
+class _RecordingUnaryStreamInterceptor(aio.UnaryStreamClientInterceptor):
+    def __init__(self, record):
+        self.record = record
+
+    async def intercept_unary_stream(
+        self, continuation, client_call_details, request_iter
+    ):
+        method = client_call_details.method
+        if isinstance(method, bytes):
+            method = method.decode()
+        self.record.append(("unary-stream", method))
+        return await continuation(client_call_details, request_iter)
+
+
+_REQUEST = b"\x00\x00\x00"
+_RESPONSE = b"\x00\x00\x00"
+_STREAM_LENGTH = 5
+
+
+async def _unary_stream_handler(unused_request, unused_context):
+    for _ in range(_STREAM_LENGTH):
+        yield _RESPONSE
+
+
+class TestInterceptedUnaryStreamCallWithRegisteredMethods(AioTestBase):
+    _SERVICE = "test"
+    _METHOD_HANDLERS = {
+        "UnaryStream": grpc.unary_stream_rpc_method_handler(
+            _unary_stream_handler
+        )
+    }
+
+    async def setUp(self):
+        self._server = aio.server()
+        self._port = self._server.add_insecure_port("[::]:0")
+        self._server.add_registered_method_handlers(
+            self._SERVICE, self._METHOD_HANDLERS
+        )
+        await self._server.start()
+
+    async def tearDown(self):
+        await self._server.stop(0)
+
+    async def test_unary_stream_interceptor(self):
+        record = []
+        fully_qualified_method = f"/{self._SERVICE}/UnaryStream"
+
+        async with grpc.aio.insecure_channel(
+            f"localhost:{self._port}",
+            interceptors=[_RecordingUnaryStreamInterceptor(record)],
+        ) as channel:
+            multi_callable = channel.unary_stream(
+                fully_qualified_method, _registered_method=True
+            )
+            responses = []
+            async for response in multi_callable(_REQUEST):
+                responses.append(response)
+
+            self.assertEqual(len(responses), _STREAM_LENGTH)
+            self.assertEqual(len(record), 1)
+            self.assertEqual(
+                record[0], ("unary-stream", fully_qualified_method)
+            )
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
     unittest.main(verbosity=2)

@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections import defaultdict, Counter
+from collections import Counter
+from collections import defaultdict
 import concurrent.futures
 import datetime
 import logging
@@ -30,13 +31,13 @@ from grpc_observability._open_telemetry_observability import (
 )
 from grpc_observability._open_telemetry_observability import GRPC_METHOD_LABEL
 from grpc_observability._open_telemetry_observability import GRPC_TARGET_LABEL
+from opentelemetry.sdk import trace as sdk_trace
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import AggregationTemporality
 from opentelemetry.sdk.metrics.export import MetricExportResult
 from opentelemetry.sdk.metrics.export import MetricExporter
 from opentelemetry.sdk.metrics.export import MetricsData
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
-from opentelemetry.sdk import trace as sdk_trace
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export import SpanExporter
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
@@ -910,8 +911,7 @@ class OpenTelemetryObservabilityTest(unittest.TestCase):
             id_generator=UserDefinedIdGenerator()
         )
         with self.assertRaisesRegex(
-            ValueError,
-            "User-defined IdGenerators are not allowed."
+            ValueError, "User-defined IdGenerators are not allowed."
         ):
             grpc_observability.OpenTelemetryPlugin(
                 tracer_provider=otel_tracer_provider,
@@ -930,8 +930,7 @@ class OpenTelemetryObservabilityTest(unittest.TestCase):
             id_generator=UserDefinedIdGenerator()
         )
         with self.assertRaisesRegex(
-            ValueError,
-            "User-defined IdGenerators are not allowed."
+            ValueError, "User-defined IdGenerators are not allowed."
         ):
             grpc_observability.OpenTelemetryPlugin(
                 tracer_provider=otel_tracer_provider,
@@ -953,17 +952,14 @@ class OpenTelemetryObservabilityTest(unittest.TestCase):
             def do_rpc(unused):
                 multi_callable(b"\x00\x00\x00")
 
-            with concurrent.futures.ThreadPoolExecutor(
-                max_workers=8
-            ) as pool:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
                 list(pool.map(do_rpc, range(NUM_RPCS)))
 
             channel.close()
 
         self.assert_eventually(
-            lambda: len(
-                self._span_exporter.get_finished_spans()
-            ) >= EXPECTED_SPANS,
+            lambda: len(self._span_exporter.get_finished_spans())
+            >= EXPECTED_SPANS,
             timeout=datetime.timedelta(seconds=10),
             message=lambda: (
                 f"Expected {EXPECTED_SPANS} spans, got "
@@ -986,14 +982,13 @@ class OpenTelemetryObservabilityTest(unittest.TestCase):
         # Verify id
         span_ids = [s.get_span_context().span_id for s in spans]
         counts = Counter(span_ids)
-        #print(counts)
+        # print(counts)
         for span_id, count in counts.items():
             self.assertTrue(count == 1)
 
         trace_ids = [s.context.trace_id for s in spans]
         counts = Counter(trace_ids)
         print(counts)
-
 
     def testSpanStatusForUnimplementedRpcMethod(self):
         with grpc_observability.OpenTelemetryPlugin(
@@ -1042,19 +1037,17 @@ class OpenTelemetryObservabilityTest(unittest.TestCase):
         # validate parent-child relationship
         self.assertEqual(
             client_span.get_span_context().trace_id,
-            attempt_span.get_span_context().trace_id
+            attempt_span.get_span_context().trace_id,
         )
         self.assertEqual(
-            attempt_span.parent.span_id,
-            client_span.get_span_context().span_id
+            attempt_span.parent.span_id, client_span.get_span_context().span_id
         )
         self.assertEqual(
             attempt_span.get_span_context().trace_id,
-            server_span.get_span_context().trace_id
+            server_span.get_span_context().trace_id,
         )
         self.assertEqual(
-            server_span.parent.span_id,
-            attempt_span.get_span_context().span_id
+            server_span.parent.span_id, attempt_span.get_span_context().span_id
         )
 
     def assert_eventually(
@@ -1150,19 +1143,17 @@ class OpenTelemetryObservabilityTest(unittest.TestCase):
         # validate parent-child relationship
         self.assertEqual(
             client_span.get_span_context().trace_id,
-            attempt_span.get_span_context().trace_id
+            attempt_span.get_span_context().trace_id,
         )
         self.assertEqual(
-            attempt_span.parent.span_id,
-            client_span.get_span_context().span_id
+            attempt_span.parent.span_id, client_span.get_span_context().span_id
         )
         self.assertEqual(
             attempt_span.get_span_context().trace_id,
-            server_span.get_span_context().trace_id
+            server_span.get_span_context().trace_id,
         )
         self.assertEqual(
-            server_span.parent.span_id,
-            attempt_span.get_span_context().span_id
+            server_span.parent.span_id, attempt_span.get_span_context().span_id
         )
 
         # validate server span traced events

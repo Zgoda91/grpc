@@ -217,7 +217,7 @@ class _OpenTelemetryPlugin:
         trace_id: str,
         span_id: str,
         is_sampled: bool,
-        context: Optional[otel_context.Context] = None
+        context: Optional[otel_context.Context] = None,
     ) -> otel_context.Context:
         """Builds new Otel context from trace_id, span_id and sampling flag."
 
@@ -247,7 +247,6 @@ class _OpenTelemetryPlugin:
         parent_span = trace.NonRecordingSpan(span_context)
         return trace.set_span_in_context(parent_span, context)
 
-
     def save_trace_context(
         self, trace_id: str, span_id: str, is_sampled: bool
     ) -> None:
@@ -259,7 +258,7 @@ class _OpenTelemetryPlugin:
                 trace_id=trace_id,
                 span_id=span_id,
                 is_sampled=is_sampled,
-                context=self._trace_ctx
+                context=self._trace_ctx,
             )
 
     def _status_to_otel_status(self, status: str) -> trace.Status:

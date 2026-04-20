@@ -43,9 +43,8 @@ from opentelemetry import trace
 from opentelemetry.metrics import Counter
 from opentelemetry.metrics import Histogram
 from opentelemetry.metrics import Meter
-from opentelemetry.sdk import trace as sdk_trace
 from opentelemetry.propagators.textmap import TextMapPropagator
-
+from opentelemetry.sdk import trace as sdk_trace
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -267,7 +266,7 @@ class _OpenTelemetryPlugin:
         """
         # Build parent context locally to avoid race conditions when
         # concurrent RPCs are collecting traces
-        if (self._text_map_propagator and tracing_data.received_headers):
+        if self._text_map_propagator and tracing_data.received_headers:
             local_ctx = self._text_map_propagator.extract(
                 carrier=tracing_data.received_headers
             )
@@ -320,10 +319,7 @@ class _OpenTelemetryPlugin:
         return labels_for_exchange
 
     def get_client_propagation_headers(
-        self,
-        trace_id: str,
-        span_id: str,
-        is_sampled: bool
+        self, trace_id: str, span_id: str, is_sampled: bool
     ) -> Dict[str, str]:
         if not self._text_map_propagator:
             return {}
@@ -677,7 +673,7 @@ class OpenTelemetryObservability(grpc._observability.ObservabilityPlugin):
         return client_exchange_labels
 
     def _make_propagation_headers_callable(
-        self
+        self,
     ) -> Optional[Callable[[str, str, bool], Dict[str, str]]]:
         plugins_with_propagator = [
             p for p in self._plugins if p._text_map_propagator

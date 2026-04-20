@@ -122,6 +122,7 @@ struct SpanCensusData {
   std::string parent_span_id;
   std::string status;
   std::vector<Label> span_labels;
+  std::vector<Label> received_headers;
   std::vector<Event> span_events;
   int64_t child_span_count;
   bool should_sample;
@@ -195,6 +196,8 @@ class Span final {
       absl::string_view name,
       std::vector<std::pair<absl::string_view, absl::string_view>> attributes);
 
+  void SetReceivedHeaders(std::vector<Label> received_headers);
+
   SpanCensusData ToCensusData() const;
 
  private:
@@ -208,6 +211,7 @@ class Span final {
   absl::Time end_time_;
   std::string status_;
   std::vector<Label> span_labels_;
+  std::vector<Label> received_headers_;
   std::vector<Event> span_events_;
   SpanContext context_;
   uint64_t child_span_count_ = 0;

@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
 from concurrent import futures
+import json
 from typing import Tuple
 
 import grpc
@@ -36,6 +36,7 @@ COMPRESS_RPC_METADATA = ("control", "compress")
 LARGE_MESSAGE_SIZE = 1000
 _LARGE_REQUEST = b"\x00" * LARGE_MESSAGE_SIZE
 _LARGE_RESPONSE = b"\x01" * LARGE_MESSAGE_SIZE
+
 
 def handle_unary_unary(request, servicer_context):
     if ABORT_RPC_METADATA in servicer_context.invocation_metadata():
@@ -173,18 +174,15 @@ def unary_unary_retry_call(port, max_attempts=3):
             "methodConfig": [
                 {
                     "name": [
-                        {
-                            "service": _SERVICE_NAME,
-                            "method": _UNARY_UNARY
-                        }
+                        {"service": _SERVICE_NAME, "method": _UNARY_UNARY}
                     ],
                     "retryPolicy": {
                         "maxAttempts": max_attempts,
                         "initialBackoff": "0.1s",
                         "maxBackoff": "120s",
                         "backoffMultiplier": 1,
-                        "retryableStatusCodes": ["ABORTED"]
-                    }
+                        "retryableStatusCodes": ["ABORTED"],
+                    },
                 }
             ]
         }

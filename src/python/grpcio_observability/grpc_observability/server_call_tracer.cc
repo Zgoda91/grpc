@@ -116,11 +116,10 @@ void PythonOpenCensusServerCallTracer::RecordReceivedInitialMetadata(
   method_ = GetMethod(path_);
   const auto tracing_enabled = PythonCensusTracingEnabled();
   const bool propagator_configured = !propagation_fields_.empty();
-  GenerateServerContext(
-      (tracing_enabled && propagator_configured)
-          ? som.tracing_slice.as_string_view()
-          : "",
-      absl::StrCat("Recv.", method_), &context_);
+  GenerateServerContext((tracing_enabled && propagator_configured)
+                            ? som.tracing_slice.as_string_view()
+                            : "",
+                        absl::StrCat("Recv.", method_), &context_);
   registered_method_ =
       recv_initial_metadata->get(grpc_core::GrpcRegisteredMethod())
           .value_or(nullptr) != nullptr;

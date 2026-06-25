@@ -28,7 +28,6 @@ from opentelemetry.trace.propagation.tracecontext import (
     TraceContextTextMapPropagator,
 )
 
-
 _SERVER_PORT = "50051"
 
 

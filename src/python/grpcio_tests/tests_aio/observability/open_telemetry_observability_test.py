@@ -272,7 +272,7 @@ class _ObservabilityMixin:
             )
             self.assertEqual(
                 server_span.parent.span_id,
-                attempt_span.get_span_context().span_id
+                attempt_span.get_span_context().span_id,
             )
         else:
             self.assertNotEqual(

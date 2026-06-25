@@ -1243,7 +1243,7 @@ class OpenTelemetryObservabilityTest(unittest.TestCase):
         )
         self.assertEqual(
             propagating_client_span.get_span_context().trace_id,
-            propagating_server_span.get_span_context().trace_id
+            propagating_server_span.get_span_context().trace_id,
         )
 
         nested_server_span = next(
@@ -1251,7 +1251,7 @@ class OpenTelemetryObservabilityTest(unittest.TestCase):
         )
         self.assertNotEqual(
             nested_server_span.get_span_context().trace_id,
-            propagating_server_span.get_span_context().trace_id
+            propagating_server_span.get_span_context().trace_id,
         )
         self.assertNotEqual(
             nested_server_span.get_span_context().trace_id, client_trace_id
@@ -1284,7 +1284,7 @@ class OpenTelemetryObservabilityTest(unittest.TestCase):
 
         self.assertEqual(
             test_span.get_span_context().trace_id,
-            client_span.get_span_context().trace_id
+            client_span.get_span_context().trace_id,
         )
         self.assertEqual(
             client_span.parent.span_id, test_span.get_span_context().span_id
@@ -1479,7 +1479,7 @@ class OpenTelemetryObservabilityTest(unittest.TestCase):
             )
             self.assertEqual(
                 server_span.parent.span_id,
-                attempt_span.get_span_context().span_id
+                attempt_span.get_span_context().span_id,
             )
         else:
             self.assertNotEqual(

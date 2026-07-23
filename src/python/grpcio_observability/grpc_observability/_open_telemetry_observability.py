@@ -306,7 +306,7 @@ class _OpenTelemetryPlugin:
                 _LOGGER.warning(
                     "Invalid start_time '%s' for span, defaulting to current "
                     "time.",
-                    tracing_data.start_time
+                    tracing_data.start_time,
                 )
                 # For None tracing library auto-generates the current time
                 parsed_start_time = None
@@ -336,7 +336,7 @@ class _OpenTelemetryPlugin:
         except ValueError:
             _LOGGER.warning(
                 "Invalid end_time '%s' for span, defaulting to current time.",
-                tracing_data.end_time
+                tracing_data.end_time,
             )
             # For None tracing library auto-generates the current time
             parsed_end_time = None
